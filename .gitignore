@@ -1,0 +1,14 @@
+# Logs and Temp
+*.log
+*.bak
+*.bak2
+.DS_Store
+Thumbs.db
+
+# Node.js
+node_modules/
+package-lock.json
+
+# IDE
+.vscode/
+.idea/
