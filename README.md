@@ -13,8 +13,8 @@
 
 ## 中文说明
 
-本项目为**役次元 (Yiciyuan) 电动飞机杯 (型号: YCY-FJB-03)** 在 **Intiface Central** (Buttplug.io) 上的全自动适配与修复工具。
-
+本项目为**役次元 (Yiciyuan) 电动飞机杯三代 (型号: YCY-FJB-03)** 在 **Intiface Central** (Buttplug.io) 上的全自动适配与修复工具。
+*电动飞机杯二代已被官方支持 (型号: YCY-FJB-01)
 ### 痛点与根本原因分析
 
 在使用官方 Intiface Central 连接 YCY-FJB-03 时，会遇到以下三个关键问题：
