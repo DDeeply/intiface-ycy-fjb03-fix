@@ -85,8 +85,8 @@ flowchart TD
 
 ## English
 
-Automated fix and hardware compatibility patch for **Yiciyuan (役次元) YCY-FJB-03 Electric Masturbator** on **Intiface Central** (Buttplug.io).
-
+Automated fix and hardware compatibility patch for **Yiciyuan (役次元) gen3 YCY-FJB-03 Electric Masturbator** on **Intiface Central** (Buttplug.io).
+*Yiciyuan (役次元) gen1 YCY-FJB-01 Electric Masturbator was supported offically.
 ### Technical Background
 
 When connecting `YCY-FJB-03` with vanilla Intiface Central:
