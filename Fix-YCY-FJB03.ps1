@@ -1,12 +1,17 @@
 # ==============================================================================
 #  Yiciyuan (役次元) YCY-FJB-03 Intiface Central All-in-One Fix Script
+#  Version: 1.1.0
 # ==============================================================================
 #
-#  Features:
-#    1. Patches buttplug-device-config-v5.json with YCY-FJB-03 protocol spec
-#    2. Configures buttplug-user-device-config-v5.json to prevent auto-update wiping
-#    3. Hot-patches rust_lib_intiface_central.dll with 6-byte frames + checksum
-#    4. Restarts Intiface Central (optional)
+#  Features & Improvements:
+#    1. Patches buttplug-device-config-v5.json without UTF-8 BOM.
+#    2. Generates schema-compliant buttplug-user-device-config-v5.json
+#       (nesting configurations under 'devices' and cleaning null identifiers).
+#    3. Locks user config as READ-ONLY to prevent Buttplug runtime wiping.
+#    4. Dynamically scans and hot-patches rust_lib_intiface_central.dll
+#       (adaptive to any Intiface Central build version).
+#    5. Comprehensive installation directory discovery.
+#    6. Safe process restart with isolated working directory.
 #
 # ==============================================================================
 
@@ -15,10 +20,16 @@ $ErrorActionPreference = "Stop"
 
 # Detect Intiface Central installation path
 $Candidates = @(
-    "F:\Program Files\IntifaceCentral",
+    "C:\Program Files (x86)\IntifaceCentral",
     "C:\Program Files\IntifaceCentral",
+    "D:\Program Files (x86)\IntifaceCentral",
     "D:\Program Files\IntifaceCentral",
-    "$env:LOCALAPPDATA\Programs\IntifaceCentral"
+    "E:\Program Files (x86)\IntifaceCentral",
+    "E:\Program Files\IntifaceCentral",
+    "F:\Program Files (x86)\IntifaceCentral",
+    "F:\Program Files\IntifaceCentral",
+    "$env:LOCALAPPDATA\Programs\IntifaceCentral",
+    "$env:LOCALAPPDATA\IntifaceCentral"
 )
 
 $IntifaceDir = $null
@@ -38,6 +49,7 @@ if (-not $IntifaceDir) {
 }
 
 if (-not $IntifaceDir) {
+    # Fallback default
     $IntifaceDir = "F:\Program Files\IntifaceCentral"
 }
 
@@ -50,6 +62,8 @@ $UserConfig  = "$ConfigDir\buttplug-user-device-config-v5.json"
 $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $DllPatchJs  = "$ScriptDir\ycy_dll_patch.js"
 
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
 function Write-OK    { param($m) Write-Host "  [OK] $m" -ForegroundColor Green  }
 function Write-Info  { param($m) Write-Host "  [..] $m" -ForegroundColor Cyan   }
 function Write-Warn  { param($m) Write-Host "  [!!] $m" -ForegroundColor Yellow }
@@ -58,7 +72,7 @@ function Write-Title { param($m) Write-Host "`n=== $m ===" -ForegroundColor Whit
 
 Write-Host ""
 Write-Host "  ========================================================" -ForegroundColor Magenta
-Write-Host "    Yiciyuan YCY-FJB-03 Intiface Central Auto-Fix Tool    " -ForegroundColor Magenta
+Write-Host "    Yiciyuan YCY-FJB-03 Intiface Central Fix (v1.1.0)     " -ForegroundColor Magenta
 Write-Host "  ========================================================" -ForegroundColor Magenta
 Write-Host "  Intiface Dir : $IntifaceDir" -ForegroundColor DarkGray
 Write-Host "  Config Dir   : $ConfigDir" -ForegroundColor DarkGray
@@ -122,27 +136,34 @@ if (-not $hasConfig) {
 if ($changed) {
     $bakMain = "$MainConfig.bak"
     if (-not (Test-Path $bakMain)) { Copy-Item $MainConfig $bakMain }
-    $mainJson | ConvertTo-Json -Depth 20 | Set-Content $MainConfig -Encoding UTF8
-    Write-OK "Main device configuration successfully patched."
+    $mainRaw = $mainJson | ConvertTo-Json -Depth 25
+    [System.IO.File]::WriteAllText($MainConfig, $mainRaw, $utf8NoBom)
+    Write-OK "Main device configuration successfully patched (UTF-8 No-BOM)."
 } else {
     Write-OK "Main configuration is already up-to-date."
 }
 
 # ------------------------------------------------------------------------------
-# STEP 2: User Device Configuration (Persistent Protection)
+# STEP 2: User Device Configuration (Schema-Compliant + Read-Only Lock)
 # ------------------------------------------------------------------------------
-Write-Title "STEP 2: User Device Config (Anti-Overwrite Protection)"
+Write-Title "STEP 2: User Device Config (Schema-Compliant & Read-Only Lock)"
 
-if (-not (Test-Path $UserConfig)) {
+# Unlock if previously marked read-only
+if (Test-Path $UserConfig) {
+    try {
+        (Get-Item $UserConfig).IsReadOnly = $false
+    } catch {}
+} else {
     Write-Warn "User config not found. Creating a new template..."
     $emptyConfig = [PSCustomObject]@{
-        version      = [PSCustomObject]@{ major = 5; minor = 30 }
+        version      = [PSCustomObject]@{ major = 5; minor = 57 }
         user_configs = [PSCustomObject]@{
             protocols = [PSCustomObject]@{}
             devices   = @()
         }
     }
-    $emptyConfig | ConvertTo-Json -Depth 10 | Set-Content $UserConfig -Encoding UTF8
+    $emptyRaw = $emptyConfig | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText($UserConfig, $emptyRaw, $utf8NoBom)
 }
 
 $userJson = Get-Content $UserConfig -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -151,47 +172,60 @@ if (-not ($userJson.user_configs.PSObject.Properties.Name -contains "protocols")
     $userJson.user_configs | Add-Member -MemberType NoteProperty -Name "protocols" -Value ([PSCustomObject]@{})
 }
 
-$existingNames = $null
-try { $existingNames = $userJson.user_configs.protocols.yiciyuan.communication[0].btle.names } catch {}
+# Clean up any invalid devices records with null identifier string to satisfy schema
+if ($userJson.user_configs.devices) {
+    $validDevices = @()
+    foreach ($dev in $userJson.user_configs.devices) {
+        if ($dev.identifier -and $null -ne $dev.identifier.identifier) {
+            $validDevices += $dev
+        }
+    }
+    $userJson.user_configs.devices = $validDevices
+}
 
-$needUserUpdate = (-not $existingNames) -or ($existingNames -notcontains "YCY-FJB-03")
-
-if ($needUserUpdate) {
-    $bakUser = "$UserConfig.bak"
-    if (-not (Test-Path $bakUser)) { Copy-Item $UserConfig $bakUser }
-
-    $ycyEntry = [PSCustomObject]@{
-        communication  = @(
-            [PSCustomObject]@{
-                btle = [PSCustomObject]@{
-                    names    = @("YCY-FJB-01","YCY-FJB-02","YCY-FJB-03","YCY-FJB-*")
-                    services = [PSCustomObject]@{
-                        "0000ff40-0000-1000-8000-00805f9b34fb" = [PSCustomObject]@{
-                            rxblebattery = "0000ff42-0000-1000-8000-00805f9b34fb"
-                            tx           = "0000ff41-0000-1000-8000-00805f9b34fb"
-                        }
+# Schema: user_configs.protocols.<name> requires 'communication' and 'devices.configurations'
+$ycyUserEntry = [PSCustomObject]@{
+    communication = @(
+        [PSCustomObject]@{
+            btle = [PSCustomObject]@{
+                names    = @("YCY-FJB-01", "YCY-FJB-02", "YCY-FJB-03", "YCY-FJB-*")
+                services = [PSCustomObject]@{
+                    "0000ff40-0000-1000-8000-00805f9b34fb" = [PSCustomObject]@{
+                        rxblebattery = "0000ff42-0000-1000-8000-00805f9b34fb"
+                        tx           = "0000ff41-0000-1000-8000-00805f9b34fb"
                     }
                 }
             }
-        )
+        }
+    )
+    devices = [PSCustomObject]@{
         configurations = @(
-            [PSCustomObject]@{ id="e45517ef-4358-4e65-8d78-3ff9447ea1c9"; identifier=@("YCY-FJB-01"); name="Yiciyuan FJB-01" }
-            [PSCustomObject]@{ id="48108f07-5871-445b-9f2a-10ceb1809b23"; identifier=@("YCY-FJB-02"); name="Yiciyuan FJB-02" }
-            [PSCustomObject]@{ id="7b3a2f91-d4c5-4e8a-b6f7-2c1d9e0a5b3c"; identifier=@("YCY-FJB-03"); name="Yiciyuan FJB-03" }
+            [PSCustomObject]@{ id = "e45517ef-4358-4e65-8d78-3ff9447ea1c9"; identifier = @("YCY-FJB-01"); name = "Yiciyuan FJB-01" }
+            [PSCustomObject]@{ id = "48108f07-5871-445b-9f2a-10ceb1809b23"; identifier = @("YCY-FJB-02"); name = "Yiciyuan FJB-02" }
+            [PSCustomObject]@{ id = "7b3a2f91-d4c5-4e8a-b6f7-2c1d9e0a5b3c"; identifier = @("YCY-FJB-03"); name = "Yiciyuan FJB-03" }
         )
     }
+}
 
-    $userJson.user_configs.protocols | Add-Member -MemberType NoteProperty -Name "yiciyuan" -Value $ycyEntry -Force
-    $userJson | ConvertTo-Json -Depth 20 | Set-Content $UserConfig -Encoding UTF8
-    Write-OK "User configuration protected. Auto-update will no longer remove YCY-FJB-03."
-} else {
-    Write-OK "User configuration already protected."
+$bakUser = "$UserConfig.bak"
+if (-not (Test-Path $bakUser)) { Copy-Item $UserConfig $bakUser }
+
+$userJson.user_configs.protocols | Add-Member -MemberType NoteProperty -Name "yiciyuan" -Value $ycyUserEntry -Force
+$userRaw = $userJson | ConvertTo-Json -Depth 25
+[System.IO.File]::WriteAllText($UserConfig, $userRaw, $utf8NoBom)
+
+# Lock user config as Read-Only to prevent Buttplug runtime wiping bug
+try {
+    (Get-Item $UserConfig).IsReadOnly = $true
+    Write-OK "User configuration injected & locked as READ-ONLY (prevents runtime wiping)."
+} catch {
+    Write-Warn "Could not set Read-Only on user config: $_"
 }
 
 # ------------------------------------------------------------------------------
-# STEP 3: DLL Protocol Hot-Patch (6-Byte Frame + Checksum)
+# STEP 3: DLL Protocol Hot-Patch (Dynamic Pattern Scanning)
 # ------------------------------------------------------------------------------
-Write-Title "STEP 3: Engine DLL Binary Patch (rust_lib_intiface_central.dll)"
+Write-Title "STEP 3: Engine DLL Binary Patch (Dynamic Signature Scan)"
 
 if (-not (Test-Path $DllPath)) {
     Write-Err "Target DLL not found at: $DllPath"
@@ -208,21 +242,26 @@ if (-not $nodeCmd) {
 } elseif (-not (Test-Path $DllPatchJs)) {
     Write-Err "DLL patch script not found: $DllPatchJs"
 } else {
-    Write-Info "Verifying / patching engine DLL..."
+    Write-Info "Executing dynamic pattern scan on engine DLL..."
+
+    # Temporarily allow stderr without terminating script
+    $savedEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     $nodeOut = & node $DllPatchJs $DllPath 2>&1
     $dllExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $savedEAP
 
     if ($dllExitCode -eq 0) {
         if ("$nodeOut" -match "ALREADY_PATCHED") {
-            Write-OK "DLL already hot-patched (6-byte frame + checksum active)."
+            Write-OK "DLL already hot-patched ($nodeOut)."
         } elseif ("$nodeOut" -match "PATCH_APPLIED") {
-            Write-OK "DLL hot-patch applied successfully!"
+            Write-OK "DLL hot-patch applied successfully! ($nodeOut)"
         }
     } elseif ($dllExitCode -eq 2) {
         Write-Err "DLL write verification failed. Please run this script as Administrator."
     } elseif ($dllExitCode -eq 3) {
-        Write-Warn "DLL signature mismatch. Intiface Central may have been upgraded to a newer version."
-        Write-Warn "Details: $nodeOut"
+        Write-Warn "DLL signature mismatch. Intiface Central may have introduced a protocol rewrite."
+        Write-Warn "Output: $nodeOut"
     } else {
         Write-Err "DLL hot-patch error (exit $dllExitCode): $nodeOut"
     }
@@ -238,7 +277,7 @@ if ($running) {
     Write-Info "Restarting running Intiface Central process to apply changes..."
     $running | Stop-Process -Force
     Start-Sleep -Milliseconds 1500
-    Start-Process -FilePath $IntifaceExe
+    Start-Process -FilePath $IntifaceExe -WorkingDirectory $IntifaceDir
     Write-OK "Intiface Central restarted successfully."
 } else {
     Write-Info "Intiface Central is not currently running."
@@ -246,7 +285,7 @@ if ($running) {
         try {
             $ans = Read-Host "  Launch Intiface Central now? [Y/n]"
             if ($ans -eq "" -or $ans -match "^[Yy]") {
-                Start-Process -FilePath $IntifaceExe
+                Start-Process -FilePath $IntifaceExe -WorkingDirectory $IntifaceDir
                 Write-OK "Intiface Central started."
             }
         } catch {}
