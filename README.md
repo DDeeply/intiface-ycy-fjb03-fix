@@ -133,14 +133,6 @@ When connecting `YCY-FJB-03` with vanilla Intiface Central:
 └── .gitignore             # Git ignore rules
 ```
 
----
-
-### Acknowledgements
-
-Special thanks to [@superBIAO](https://github.com/superBIAO) for the detailed reverse-engineering feedback, schema analysis, and version compatibility findings in [#1](https://github.com/DDeeply/intiface-ycy-fjb03-fix/issues/1).
-
----
-
 ### License
 
 This project is licensed under the [MIT License](LICENSE).
