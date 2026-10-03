@@ -1,13 +1,14 @@
 # ==============================================================================
 #  Yiciyuan (役次元) YCY-FJB-03 Intiface Central All-in-One Fix Script
-#  Version: 1.1.0
+#  Version: 1.1.1
 # ==============================================================================
 #
 #  Features & Improvements:
 #    1. Patches buttplug-device-config-v5.json without UTF-8 BOM.
 #    2. Generates schema-compliant buttplug-user-device-config-v5.json
 #       (nesting configurations under 'devices' and cleaning null identifiers).
-#    3. Locks user config as READ-ONLY to prevent Buttplug runtime wiping.
+#    3. Keeps user config fully writable (no PermissionDenied errors) while
+#       preventing deletion via strict schema compliance.
 #    4. Dynamically scans and hot-patches rust_lib_intiface_central.dll
 #       (adaptive to any Intiface Central build version).
 #    5. Comprehensive installation directory discovery.
@@ -72,7 +73,7 @@ function Write-Title { param($m) Write-Host "`n=== $m ===" -ForegroundColor Whit
 
 Write-Host ""
 Write-Host "  ========================================================" -ForegroundColor Magenta
-Write-Host "    Yiciyuan YCY-FJB-03 Intiface Central Fix (v1.1.0)     " -ForegroundColor Magenta
+Write-Host "    Yiciyuan YCY-FJB-03 Intiface Central Fix (v1.1.1)     " -ForegroundColor Magenta
 Write-Host "  ========================================================" -ForegroundColor Magenta
 Write-Host "  Intiface Dir : $IntifaceDir" -ForegroundColor DarkGray
 Write-Host "  Config Dir   : $ConfigDir" -ForegroundColor DarkGray
@@ -144,9 +145,9 @@ if ($changed) {
 }
 
 # ------------------------------------------------------------------------------
-# STEP 2: User Device Configuration (Schema-Compliant + Read-Only Lock)
+# STEP 2: User Device Configuration (Schema-Compliant & Fully Writable)
 # ------------------------------------------------------------------------------
-Write-Title "STEP 2: User Device Config (Schema-Compliant & Read-Only Lock)"
+Write-Title "STEP 2: User Device Config (Schema-Compliant & Fully Writable)"
 
 # Unlock if previously marked read-only
 if (Test-Path $UserConfig) {
@@ -214,13 +215,11 @@ $userJson.user_configs.protocols | Add-Member -MemberType NoteProperty -Name "yi
 $userRaw = $userJson | ConvertTo-Json -Depth 25
 [System.IO.File]::WriteAllText($UserConfig, $userRaw, $utf8NoBom)
 
-# Lock user config as Read-Only to prevent Buttplug runtime wiping bug
+# Keep user config writable now that schema is 100% compliant
 try {
-    (Get-Item $UserConfig).IsReadOnly = $true
-    Write-OK "User configuration injected & locked as READ-ONLY (prevents runtime wiping)."
-} catch {
-    Write-Warn "Could not set Read-Only on user config: $_"
-}
+    (Get-Item $UserConfig).IsReadOnly = $false
+    Write-OK "User configuration injected successfully (Writable, no PermissionDenied error)."
+} catch {}
 
 # ------------------------------------------------------------------------------
 # STEP 3: DLL Protocol Hot-Patch (Dynamic Pattern Scanning)
